@@ -15,11 +15,13 @@ install: build
 	cp jira-tray $(BINDIR)/jira-tray
 	mkdir -p $(WIDGET_DIR)/contents/ui
 	mkdir -p $(WIDGET_DIR)/contents/config
+	mkdir -p $(WIDGET_DIR)/contents/icons
 	cp widget/metadata.json $(WIDGET_DIR)/metadata.json
 	cp widget/contents/ui/main.qml $(WIDGET_DIR)/contents/ui/main.qml
 	cp widget/contents/ui/ConfigGeneral.qml $(WIDGET_DIR)/contents/ui/ConfigGeneral.qml
 	cp widget/contents/config/main.xml $(WIDGET_DIR)/contents/config/main.xml
 	cp widget/contents/config/config.qml $(WIDGET_DIR)/contents/config/config.qml
+	cp widget/contents/icons/jira-tray.svg $(WIDGET_DIR)/contents/icons/jira-tray.svg
 	mkdir -p $(HOME)/.config/autostart
 	sed 's|HOME_PLACEHOLDER|$(HOME)|g' jira-tray.desktop > $(AUTOSTART)
 

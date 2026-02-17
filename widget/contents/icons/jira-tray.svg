@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#2196F3"/>
+      <stop offset="100%" stop-color="#1565C0"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="48" fill="url(#bg)"/>
+  <!-- Checklist icon -->
+  <g fill="none" stroke="white" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Check 1 -->
+    <polyline points="56,88 72,104 96,72"/>
+    <!-- Line 1 -->
+    <line x1="120" y1="88" x2="200" y2="88"/>
+    <!-- Check 2 -->
+    <polyline points="56,140 72,156 96,124"/>
+    <!-- Line 2 -->
+    <line x1="120" y1="140" x2="200" y2="140"/>
+    <!-- Empty box 3 -->
+    <rect x="56" y="176" width="40" height="32" rx="6" fill="none"/>
+    <!-- Line 3 -->
+    <line x1="120" y1="192" x2="200" y2="192"/>
+  </g>
+</svg>

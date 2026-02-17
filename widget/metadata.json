@@ -3,10 +3,10 @@
         "Id": "com.github.aladex.jira-tray",
         "Name": "Jira Tasks",
         "Description": "Shows assigned Jira tasks with badge count",
-        "Icon": "tag",
+        "Icon": "jira-tray",
         "Authors": [
             {
-                "Name": "Aleksandr Aleksandrov",
+                "Name": "Andrei Aleksandrov",
                 "Email": ""
             }
         ],
