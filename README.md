@@ -27,23 +27,29 @@ cd jira-tray
 make install
 ```
 
-Set the required environment variables (e.g. in `~/.config/environment.d/jira-tray.conf`):
-
-```bash
-JIRA_URL=https://jira.example.com
-JIRA_TOKEN=your-personal-access-token
-```
-
-Then add the **Jira Tasks** widget to your panel or system tray.
+Add the **Jira Tasks** widget to your panel or system tray, then right-click it and choose **Configure...** to enter your Jira URL and token.
 
 ## Configuration
 
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `JIRA_URL` | Yes | — | Base URL of your Jira instance |
-| `JIRA_TOKEN` | Yes | — | Jira personal access token (Bearer) |
-| `JIRA_JQL` | No | `assignee = currentUser() AND status not in (Done, Closed, Resolved)` | JQL filter for tasks |
-| `JIRA_POLL_INTERVAL` | No | `5m` | Poll interval (Go duration: `30s`, `2m`, `10m`, etc.) |
+The widget has a built-in settings page (right-click the widget > Configure). You can set:
+
+- **Jira URL** — base URL of your Jira instance
+- **API Token** — personal access token (Bearer)
+- **JQL Filter** — custom JQL query
+- **Poll Interval** — how often to check for updates (`30s`, `2m`, `10m`, etc.)
+
+Settings are saved to `~/.config/jira-tray/config.json`.
+
+### Environment variables (optional override)
+
+Environment variables take priority over the widget settings. Useful for headless or scripted setups.
+
+| Variable | Default | Description |
+|---|---|---|
+| `JIRA_URL` | — | Base URL of your Jira instance |
+| `JIRA_TOKEN` | — | Jira personal access token (Bearer) |
+| `JIRA_JQL` | `assignee = currentUser() AND status not in (Done, Closed, Resolved)` | JQL filter |
+| `JIRA_POLL_INTERVAL` | `5m` | Poll interval (Go duration) |
 
 ## Autostart
 

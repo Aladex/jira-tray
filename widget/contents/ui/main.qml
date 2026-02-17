@@ -18,6 +18,36 @@ PlasmoidItem {
 
     Plasmoid.status: taskCount > 0 ? PlasmaCore.Types.ActiveStatus : PlasmaCore.Types.PassiveStatus
 
+    Connections {
+        target: Plasmoid.configuration
+        function onJiraUrlChanged() { pushConfigTimer.restart() }
+        function onJiraTokenChanged() { pushConfigTimer.restart() }
+        function onJiraJqlChanged() { pushConfigTimer.restart() }
+        function onPollIntervalChanged() { pushConfigTimer.restart() }
+    }
+
+    Timer {
+        id: pushConfigTimer
+        interval: 500
+        onTriggered: pushConfig()
+    }
+
+    function pushConfig() {
+        var url = Plasmoid.configuration.jiraUrl
+        var token = Plasmoid.configuration.jiraToken
+        if (!url || !token) return
+
+        var xhr = new XMLHttpRequest()
+        xhr.open("POST", baseUrl + "/api/config")
+        xhr.setRequestHeader("Content-Type", "application/json")
+        xhr.send(JSON.stringify({
+            jiraUrl: url,
+            jiraToken: token,
+            jql: Plasmoid.configuration.jiraJql,
+            pollInterval: Plasmoid.configuration.pollInterval
+        }))
+    }
+
     toolTipMainText: "Jira: " + taskCount + " tasks"
     toolTipSubText: lastUpdate ? "Updated " + lastUpdate : "Loading..."
 
@@ -207,7 +237,10 @@ PlasmoidItem {
             }
         }
 
-        Component.onCompleted: root.fetchTasks()
+        Component.onCompleted: {
+            root.pushConfig()
+            root.fetchTasks()
+        }
     }
 
     onExpandedChanged: {
