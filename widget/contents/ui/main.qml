@@ -69,6 +69,7 @@ PlasmoidItem {
             if (xhr.readyState === XMLHttpRequest.DONE) {
                 if (xhr.status === 200) {
                     backendState = "connected"
+                    syncConfigFromBackend()
                     try {
                         var data = JSON.parse(xhr.responseText)
                         taskCount = data.count
@@ -196,6 +197,7 @@ PlasmoidItem {
                     if (xhr.status === 200) {
                         startPollTimer.stop()
                         backendState = "connected"
+                        syncConfigFromBackend()
                         try {
                             var data = JSON.parse(xhr.responseText)
                             taskCount = data.count
@@ -210,6 +212,29 @@ PlasmoidItem {
             xhr.open("GET", baseUrl + "/api/status")
             xhr.send()
         }
+    }
+
+    function syncConfigFromBackend() {
+        var raw = Plasmoid.configuration.instances
+        var existing = []
+        try { existing = JSON.parse(raw) } catch(e) {}
+        if (Array.isArray(existing) && existing.length > 0) return
+
+        var xhr = new XMLHttpRequest()
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState === XMLHttpRequest.DONE) {
+                if (xhr.status === 200) {
+                    try {
+                        var instances = JSON.parse(xhr.responseText)
+                        if (Array.isArray(instances) && instances.length > 0) {
+                            Plasmoid.configuration.instances = JSON.stringify(instances)
+                        }
+                    } catch(e) {}
+                }
+            }
+        }
+        xhr.open("GET", baseUrl + "/api/instances")
+        xhr.send()
     }
 
     // --- End auto-install ---
