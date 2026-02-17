@@ -13,6 +13,33 @@ PlasmoidItem {
     property string lastUpdate: ""
     property string errorText: ""
     property var taskModel: []
+    property int currentTab: 0  // 0 = All
+    property var instanceNames: []
+
+    function filteredTasks() {
+        if (currentTab === 0) return taskModel
+        var name = instanceNames[currentTab - 1]
+        return taskModel.filter(function(t) { return t.instanceName === name })
+    }
+
+    function instanceTaskCount(name) {
+        return instanceCounts[name] || 0
+    }
+
+    property var instanceCounts: ({})
+
+    function updateInstancesFromStatus(data) {
+        if (!data.instances) return
+        var names = []
+        var counts = {}
+        for (var i = 0; i < data.instances.length; i++) {
+            var inst = data.instances[i]
+            names.push(inst.name)
+            counts[inst.name] = inst.count
+        }
+        instanceNames = names
+        instanceCounts = counts
+    }
 
     readonly property string baseUrl: "http://127.0.0.1:17842"
 
@@ -20,10 +47,7 @@ PlasmoidItem {
 
     Connections {
         target: Plasmoid.configuration
-        function onJiraUrlChanged() { pushConfigTimer.restart() }
-        function onJiraTokenChanged() { pushConfigTimer.restart() }
-        function onJiraJqlChanged() { pushConfigTimer.restart() }
-        function onPollIntervalChanged() { pushConfigTimer.restart() }
+        function onInstancesChanged() { pushConfigTimer.restart() }
     }
 
     Timer {
@@ -33,25 +57,24 @@ PlasmoidItem {
     }
 
     function pushConfig() {
-        var url = Plasmoid.configuration.jiraUrl
-        var token = Plasmoid.configuration.jiraToken
-        if (!url || !token) return
+        var raw = Plasmoid.configuration.instances
+        var list
+        try {
+            list = JSON.parse(raw)
+        } catch(e) {
+            return
+        }
+        if (!Array.isArray(list) || list.length === 0) return
 
         var xhr = new XMLHttpRequest()
-        xhr.open("POST", baseUrl + "/api/config")
+        xhr.open("POST", baseUrl + "/api/instances/sync")
         xhr.setRequestHeader("Content-Type", "application/json")
-        xhr.send(JSON.stringify({
-            jiraUrl: url,
-            jiraToken: token,
-            jql: Plasmoid.configuration.jiraJql,
-            pollInterval: Plasmoid.configuration.pollInterval
-        }))
+        xhr.send(JSON.stringify(list))
     }
 
     toolTipMainText: "Jira: " + taskCount + " tasks"
     toolTipSubText: lastUpdate ? "Updated " + lastUpdate : "Loading..."
 
-    // Poll status every 30s
     Timer {
         id: statusTimer
         interval: 30000
@@ -71,6 +94,7 @@ PlasmoidItem {
                         taskCount = data.count;
                         lastUpdate = data.lastUpdate || "";
                         errorText = data.error || "";
+                        updateInstancesFromStatus(data);
                     } catch(e) {}
                 }
             }
@@ -105,6 +129,7 @@ PlasmoidItem {
                         taskCount = data.count;
                         lastUpdate = data.lastUpdate || "";
                         errorText = data.error || "";
+                        updateInstancesFromStatus(data);
                     } catch(e) {}
                 }
                 fetchTasks();
@@ -115,9 +140,9 @@ PlasmoidItem {
     }
 
     function badgeColor() {
-        if (taskCount === 0) return "#4CAF50";  // green
-        if (taskCount <= 5) return "#FFC107";    // yellow
-        return "#F44336";                         // red
+        if (taskCount === 0) return "#4CAF50";
+        if (taskCount <= 5) return "#FFC107";
+        return "#F44336";
     }
 
     compactRepresentation: MouseArea {
@@ -193,8 +218,31 @@ PlasmoidItem {
                 wrapMode: Text.Wrap
             }
 
+            PlasmaComponents.TabBar {
+                id: tabBar
+                visible: root.instanceNames.length > 1
+                Layout.fillWidth: true
+
+                PlasmaComponents.TabButton {
+                    text: "All (" + root.taskModel.length + ")"
+                    checked: root.currentTab === 0
+                    onClicked: root.currentTab = 0
+                }
+
+                Repeater {
+                    model: root.instanceNames
+                    PlasmaComponents.TabButton {
+                        required property string modelData
+                        required property int index
+                        text: modelData + " (" + root.instanceTaskCount(modelData) + ")"
+                        checked: root.currentTab === index + 1
+                        onClicked: root.currentTab = index + 1
+                    }
+                }
+            }
+
             PlasmaComponents.Label {
-                visible: root.taskModel.length === 0 && root.errorText === ""
+                visible: root.filteredTasks().length === 0 && root.errorText === ""
                 text: "No tasks"
                 opacity: 0.6
                 Layout.fillWidth: true
@@ -207,8 +255,8 @@ PlasmoidItem {
                 id: taskList
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                visible: root.taskModel.length > 0
-                model: root.taskModel
+                visible: root.filteredTasks().length > 0
+                model: root.filteredTasks()
                 clip: true
 
                 delegate: PlasmaComponents.ItemDelegate {
@@ -224,11 +272,19 @@ PlasmoidItem {
                             maximumLineCount: 1
                         }
 
-                        PlasmaComponents.Label {
-                            text: modelData.status
-                            Layout.fillWidth: true
-                            opacity: 0.6
-                            font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+                        RowLayout {
+                            spacing: Kirigami.Units.smallSpacing
+                            PlasmaComponents.Label {
+                                text: modelData.status
+                                opacity: 0.6
+                                font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+                            }
+                            PlasmaComponents.Label {
+                                visible: root.currentTab === 0 && modelData.instanceName !== undefined
+                                text: modelData.instanceName ? ("· " + modelData.instanceName) : ""
+                                opacity: 0.4
+                                font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+                            }
                         }
                     }
 

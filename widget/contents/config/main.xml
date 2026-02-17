@@ -5,17 +5,8 @@
                           http://www.kde.org/standards/kcfg/1.0/kcfg.xsd">
   <kcfgfile name=""/>
   <group name="General">
-    <entry name="jiraUrl" type="String">
-      <default></default>
-    </entry>
-    <entry name="jiraToken" type="String">
-      <default></default>
-    </entry>
-    <entry name="jiraJql" type="String">
-      <default>assignee = currentUser() AND status not in (Done, Closed, Resolved)</default>
-    </entry>
-    <entry name="pollInterval" type="String">
-      <default>5m</default>
+    <entry name="instances" type="String">
+      <default>[]</default>
     </entry>
   </group>
 </kcfg>

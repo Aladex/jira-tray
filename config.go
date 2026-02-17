@@ -1,18 +1,41 @@
 package main
 
 import (
+	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 )
 
-type Config struct {
+type InstanceConfig struct {
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	JiraURL         string `json:"jiraUrl"`
+	JiraToken       string `json:"jiraToken"`
+	JiraEmail       string `json:"jiraEmail,omitempty"`
+	JQL             string `json:"jql"`
+	PollIntervalStr string `json:"pollInterval"`
+	PollInterval    time.Duration `json:"-"`
+}
+
+type MultiConfig struct {
+	Instances []InstanceConfig `json:"instances"`
+}
+
+// oldFlatConfig is the legacy single-instance format for migration.
+type oldFlatConfig struct {
 	JiraURL         string `json:"jiraUrl"`
 	JiraToken       string `json:"jiraToken"`
 	JQL             string `json:"jql"`
 	PollIntervalStr string `json:"pollInterval"`
-	PollInterval    time.Duration
+}
+
+func generateID() string {
+	b := make([]byte, 4)
+	_, _ = rand.Read(b)
+	return fmt.Sprintf("%x", b)
 }
 
 func configFilePath() string {
@@ -23,84 +46,153 @@ func configFilePath() string {
 	return filepath.Join(dir, "jira-tray", "config.json")
 }
 
-func loadConfigFile() (Config, error) {
-	var cfg Config
-	data, err := os.ReadFile(configFilePath())
-	if err != nil {
-		return cfg, err
-	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return cfg, err
-	}
-	cfg.parseDuration()
-	return cfg, nil
-}
-
-func (c *Config) parseDuration() {
-	if c.PollIntervalStr != "" {
-		if d, err := time.ParseDuration(c.PollIntervalStr); err == nil {
-			c.PollInterval = d
+func (ic *InstanceConfig) parseDuration() {
+	if ic.PollIntervalStr != "" {
+		if d, err := time.ParseDuration(ic.PollIntervalStr); err == nil {
+			ic.PollInterval = d
 		}
 	}
+	if ic.PollInterval <= 0 {
+		ic.PollInterval = 5 * time.Minute
+		ic.PollIntervalStr = "5m"
+	}
 }
 
-func (c Config) save() error {
+func (ic *InstanceConfig) applyDefaults() {
+	if ic.JQL == "" {
+		ic.JQL = "assignee = currentUser() AND status not in (Done, Closed, Resolved)"
+	}
+	ic.parseDuration()
+}
+
+func (ic InstanceConfig) Configured() bool {
+	return ic.JiraURL != "" && ic.JiraToken != ""
+}
+
+func LoadConfig() MultiConfig {
+	mc := MultiConfig{}
+
+	data, err := os.ReadFile(configFilePath())
+	if err == nil {
+		mc = migrateOrParse(data)
+	}
+
+	// Env var override: create synthetic instance
+	envURL := os.Getenv("JIRA_URL")
+	envToken := os.Getenv("JIRA_TOKEN")
+	if envURL != "" && envToken != "" {
+		envInst := InstanceConfig{
+			ID:      "env-override",
+			Name:    "Environment",
+			JiraURL: envURL,
+			JiraToken: envToken,
+			JQL:     "assignee = currentUser() AND status not in (Done, Closed, Resolved)",
+		}
+		if v := os.Getenv("JIRA_EMAIL"); v != "" {
+			envInst.JiraEmail = v
+		}
+		if v := os.Getenv("JIRA_JQL"); v != "" {
+			envInst.JQL = v
+		}
+		if v := os.Getenv("JIRA_POLL_INTERVAL"); v != "" {
+			envInst.PollIntervalStr = v
+		}
+		envInst.applyDefaults()
+
+		// Replace existing env-override or append
+		found := false
+		for i, inst := range mc.Instances {
+			if inst.ID == "env-override" {
+				mc.Instances[i] = envInst
+				found = true
+				break
+			}
+		}
+		if !found {
+			mc.Instances = append(mc.Instances, envInst)
+		}
+	}
+
+	return mc
+}
+
+func migrateOrParse(data []byte) MultiConfig {
+	// Try new format first
+	var mc MultiConfig
+	if err := json.Unmarshal(data, &mc); err == nil && len(mc.Instances) > 0 {
+		for i := range mc.Instances {
+			mc.Instances[i].applyDefaults()
+		}
+		return mc
+	}
+
+	// Try old flat format
+	var old oldFlatConfig
+	if err := json.Unmarshal(data, &old); err == nil && old.JiraURL != "" {
+		inst := InstanceConfig{
+			ID:              "legacy",
+			Name:            "Jira",
+			JiraURL:         old.JiraURL,
+			JiraToken:       old.JiraToken,
+			JQL:             old.JQL,
+			PollIntervalStr: old.PollIntervalStr,
+		}
+		inst.applyDefaults()
+		mc.Instances = []InstanceConfig{inst}
+		// Persist migrated format
+		_ = mc.save()
+		return mc
+	}
+
+	return MultiConfig{}
+}
+
+func (mc MultiConfig) save() error {
 	path := configFilePath()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
-	if c.PollInterval > 0 {
-		c.PollIntervalStr = c.PollInterval.String()
-	}
-	data, err := json.MarshalIndent(c, "", "  ")
+	data, err := json.MarshalIndent(mc, "", "  ")
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(path, data, 0600)
 }
 
-func LoadConfig() Config {
-	cfg := Config{
-		JQL:             "assignee = currentUser() AND status not in (Done, Closed, Resolved)",
-		PollInterval:    5 * time.Minute,
-		PollIntervalStr: "5m",
-	}
-
-	if fileCfg, err := loadConfigFile(); err == nil {
-		if fileCfg.JiraURL != "" {
-			cfg.JiraURL = fileCfg.JiraURL
-		}
-		if fileCfg.JiraToken != "" {
-			cfg.JiraToken = fileCfg.JiraToken
-		}
-		if fileCfg.JQL != "" {
-			cfg.JQL = fileCfg.JQL
-		}
-		if fileCfg.PollInterval > 0 {
-			cfg.PollInterval = fileCfg.PollInterval
-			cfg.PollIntervalStr = fileCfg.PollIntervalStr
+func (mc *MultiConfig) FindByID(id string) *InstanceConfig {
+	for i := range mc.Instances {
+		if mc.Instances[i].ID == id {
+			return &mc.Instances[i]
 		}
 	}
-
-	if v := os.Getenv("JIRA_URL"); v != "" {
-		cfg.JiraURL = v
-	}
-	if v := os.Getenv("JIRA_TOKEN"); v != "" {
-		cfg.JiraToken = v
-	}
-	if v := os.Getenv("JIRA_JQL"); v != "" {
-		cfg.JQL = v
-	}
-	if v := os.Getenv("JIRA_POLL_INTERVAL"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			cfg.PollInterval = d
-			cfg.PollIntervalStr = v
-		}
-	}
-
-	return cfg
+	return nil
 }
 
-func (c Config) Configured() bool {
-	return c.JiraURL != "" && c.JiraToken != ""
+func (mc *MultiConfig) Add(inst InstanceConfig) {
+	if inst.ID == "" {
+		inst.ID = generateID()
+	}
+	inst.applyDefaults()
+	mc.Instances = append(mc.Instances, inst)
+}
+
+func (mc *MultiConfig) Update(inst InstanceConfig) bool {
+	for i := range mc.Instances {
+		if mc.Instances[i].ID == inst.ID {
+			inst.applyDefaults()
+			mc.Instances[i] = inst
+			return true
+		}
+	}
+	return false
+}
+
+func (mc *MultiConfig) Remove(id string) bool {
+	for i := range mc.Instances {
+		if mc.Instances[i].ID == id {
+			mc.Instances = append(mc.Instances[:i], mc.Instances[i+1:]...)
+			return true
+		}
+	}
+	return false
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,23 +25,34 @@ type jiraSearchResult struct {
 }
 
 type JiraClient struct {
-	cfg Config
+	cfg InstanceConfig
 	hc  *http.Client
 }
 
-func NewJiraClient(cfg Config) *JiraClient {
+func NewJiraClient(cfg InstanceConfig) *JiraClient {
 	return &JiraClient{cfg: cfg, hc: &http.Client{}}
 }
 
+func (c *JiraClient) isCloud() bool {
+	return c.cfg.JiraEmail != ""
+}
+
 func (c *JiraClient) FetchIssues() ([]JiraIssue, error) {
-	u := fmt.Sprintf("%s/rest/api/2/search?jql=%s&fields=summary,status&maxResults=50",
-		c.cfg.JiraURL, url.QueryEscape(c.cfg.JQL))
+	var u string
+	if c.isCloud() {
+		// Jira Cloud: API v2/search removed (410), use v3
+		u = fmt.Sprintf("%s/rest/api/3/search/jql?jql=%s&fields=summary,status&maxResults=50",
+			c.cfg.JiraURL, url.QueryEscape(c.cfg.JQL))
+	} else {
+		u = fmt.Sprintf("%s/rest/api/2/search?jql=%s&fields=summary,status&maxResults=50",
+			c.cfg.JiraURL, url.QueryEscape(c.cfg.JQL))
+	}
 
 	req, err := http.NewRequest("GET", u, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.cfg.JiraToken)
+	req.Header.Set("Authorization", c.authHeader())
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.hc.Do(req)
@@ -59,6 +71,14 @@ func (c *JiraClient) FetchIssues() ([]JiraIssue, error) {
 		return nil, err
 	}
 	return result.Issues, nil
+}
+
+func (c *JiraClient) authHeader() string {
+	if c.cfg.JiraEmail != "" {
+		creds := c.cfg.JiraEmail + ":" + c.cfg.JiraToken
+		return "Basic " + base64.StdEncoding.EncodeToString([]byte(creds))
+	}
+	return "Bearer " + c.cfg.JiraToken
 }
 
 func (c *JiraClient) IssueURL(key string) string {
