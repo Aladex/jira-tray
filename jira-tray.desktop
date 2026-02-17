@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Jira Tray
+Comment=Jira task monitor for KDE Plasma system tray
+Exec=HOME_PLACEHOLDER/.local/bin/jira-tray
+Terminal=false
+Categories=Utility;
+X-KDE-autostart-phase=2

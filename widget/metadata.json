@@ -1,0 +1,19 @@
+{
+    "KPlugin": {
+        "Id": "com.github.aladex.jira-tray",
+        "Name": "Jira Tasks",
+        "Description": "Shows assigned Jira tasks with badge count",
+        "Icon": "tag",
+        "Authors": [
+            {
+                "Name": "Aleksandr Aleksandrov",
+                "Email": ""
+            }
+        ],
+        "Category": "System Information",
+        "Version": "1.0"
+    },
+    "KPackageStructure": "Plasma/Applet",
+    "X-Plasma-API-Minimum-Version": "6.0",
+    "X-Plasma-NotificationAreaCategory": "SystemServices"
+}
