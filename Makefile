@@ -3,7 +3,7 @@ BINDIR     := $(PREFIX)/bin
 WIDGET_DIR := $(HOME)/.local/share/plasma/plasmoids/com.github.aladex.jira-tray
 AUTOSTART  := $(HOME)/.config/autostart/jira-tray.desktop
 
-.PHONY: build install uninstall dev
+.PHONY: build install uninstall dev package
 
 build:
 	go build -o jira-tray
@@ -28,6 +28,10 @@ dev: install
 	nohup plasmashell --replace > /dev/null 2>&1 &
 	@sleep 2
 	@echo "reloaded"
+
+package:
+	cd widget && zip -r ../com.github.aladex.jira-tray.plasmoid metadata.json contents/
+	@echo "created com.github.aladex.jira-tray.plasmoid"
 
 uninstall:
 	rm -f $(BINDIR)/jira-tray
