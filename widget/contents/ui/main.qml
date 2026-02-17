@@ -146,7 +146,7 @@ PlasmoidItem {
             "mkdir -p ~/.local/bin && " +
             "cd $(mktemp -d) && " +
             "curl -fsSL -o release.tar.gz '" + url + "' && " +
-            "tar xzf release.tar.gz && " +
+            "tar xzf release.tar.gz --strip-components=1 && " +
             "chmod +x jira-tray && " +
             "mv jira-tray ~/.local/bin/jira-tray && " +
             "mkdir -p ~/.config/autostart && " +
