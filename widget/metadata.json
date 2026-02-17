@@ -11,7 +11,7 @@
             }
         ],
         "Category": "System Information",
-        "Version": "1.1"
+        "Version": "1.1.1"
     },
     "KPackageStructure": "Plasma/Applet",
     "X-Plasma-API-Minimum-Version": "6.0",

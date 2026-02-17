@@ -38,20 +38,20 @@ PlasmoidItem {
             var stderr = data["stderr"] || ""
             var exitCode = data["exit code"] || 0
             disconnectSource(source)
-            if (source.indexOf("__checkbin__") === 0) {
+            if (source.indexOf("#__checkbin__") !== -1) {
                 handleCheckBinResult(exitCode)
-            } else if (source.indexOf("__uname__") === 0) {
+            } else if (source.indexOf("#__uname__") !== -1) {
                 handleUnameResult(stdout.trim())
-            } else if (source.indexOf("__install__") === 0) {
+            } else if (source.indexOf("#__install__") !== -1) {
                 handleInstallResult(exitCode, stderr)
-            } else if (source.indexOf("__start__") === 0) {
+            } else if (source.indexOf("#__start__") !== -1) {
                 handleStartResult(exitCode, stderr)
             }
         }
     }
 
     function execCmd(tag, cmd) {
-        var source = tag + "__" + Date.now() + "__" + cmd
+        var source = cmd + " #" + tag + "_" + Date.now()
         executable.connectSource(source)
     }
 
