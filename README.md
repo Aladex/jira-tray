@@ -16,15 +16,21 @@ A lightweight Jira task monitor that lives in your KDE Plasma system tray. It po
 
 ## Requirements
 
-- Go 1.22+
 - KDE Plasma 6
 
-## Quick Start
+## Install from KDE Store
+
+1. Download `com.github.aladex.jira-tray.plasmoid` from the [KDE Store](https://store.kde.org/) or [GitHub Releases](https://github.com/Aladex/jira-tray/releases)
+2. Install: `kpackagetool6 -i com.github.aladex.jira-tray.plasmoid`
+3. Add the **Jira Tasks** widget to your panel or system tray
+4. Open the widget — it will detect the missing backend and offer a one-click **Install Backend** button that downloads the correct binary from GitHub Releases, installs it to `~/.local/bin/`, sets up autostart, and starts it
+
+## Build from source
 
 ```bash
 git clone https://github.com/Aladex/jira-tray.git
 cd jira-tray
-make install
+make install   # requires Go 1.22+
 ```
 
 Add the **Jira Tasks** widget to your panel or system tray, then right-click it and choose **Configure...** to add your Jira instances.
@@ -67,7 +73,7 @@ Old `config.json` files (flat format) are auto-migrated to the new multi-instanc
 
 ## Autostart
 
-`make install` places a `.desktop` file in `~/.config/autostart/`, so the backend starts automatically on login. Make sure your environment variables are set before the session starts (e.g. via `environment.d`).
+Both installation methods (widget auto-install and `make install`) place a `.desktop` file in `~/.config/autostart/`, so the backend starts automatically on login. Make sure your environment variables are set before the session starts (e.g. via `environment.d`).
 
 ## Uninstall
 
