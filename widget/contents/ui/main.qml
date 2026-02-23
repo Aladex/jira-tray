@@ -14,230 +14,250 @@ PlasmoidItem {
     property string lastUpdate: ""
     property string errorText: ""
     property var taskModel: []
-    property int currentTab: 0  // 0 = All
+    property int currentTab: 0
     property var instanceNames: []
+    property var instanceCounts: ({})
 
-    // Backend auto-install state
-    // States: "checking", "connected", "not_running", "not_installed",
-    //         "installing", "starting", "error"
-    property string backendState: "checking"
-    property string backendError: ""
-    property string detectedArch: ""
-    property string latestVersion: ""
-    property int startPollCount: 0
+    // Per-instance state: { id: { issues: [], lastKeys: {}, lastError: "", lastUpdate: "" } }
+    property var instanceStates: ({})
+    // Per-instance last poll timestamp (ms): { id: number }
+    property var instanceLastPoll: ({})
 
-    readonly property string backendBin: "~/.local/bin/jira-tray"
-    readonly property string githubRepo: "Aladex/jira-tray"
-
+    // Notification support via notify-send
     P5Support.DataSource {
-        id: executable
+        id: notifier
         engine: "executable"
         connectedSources: []
         onNewData: function(source, data) {
-            var stdout = data["stdout"] || ""
-            var stderr = data["stderr"] || ""
-            var exitCode = data["exit code"] || 0
             disconnectSource(source)
-            if (source.indexOf("#__checkbin__") !== -1) {
-                handleCheckBinResult(exitCode)
-            } else if (source.indexOf("#__uname__") !== -1) {
-                handleUnameResult(stdout.trim())
-            } else if (source.indexOf("#__install__") !== -1) {
-                handleInstallResult(exitCode, stderr)
-            } else if (source.indexOf("#__start__") !== -1) {
-                handleStartResult(exitCode, stderr)
-            }
         }
     }
 
-    function execCmd(tag, cmd) {
-        var source = cmd + " #" + tag + "_" + Date.now()
-        executable.connectSource(source)
+    function sendNotification(title, body) {
+        var cmd = "notify-send '" + title.replace(/'/g, "'\\''") + "' '" + body.replace(/'/g, "'\\''") + "'"
+        notifier.connectSource(cmd)
     }
 
-    // --- State machine transitions ---
-
-    function beginBackendCheck() {
-        backendState = "checking"
-        backendError = ""
-        fetchStatusForCheck()
-    }
-
-    function fetchStatusForCheck() {
-        var xhr = new XMLHttpRequest()
-        xhr.onreadystatechange = function() {
-            if (xhr.readyState === XMLHttpRequest.DONE) {
-                if (xhr.status === 200) {
-                    backendState = "connected"
-                    syncConfigFromBackend()
-                    try {
-                        var data = JSON.parse(xhr.responseText)
-                        taskCount = data.count
-                        lastUpdate = data.lastUpdate || ""
-                        errorText = data.error || ""
-                        updateInstancesFromStatus(data)
-                    } catch(e) {}
-                } else {
-                    checkBackendInstalled()
-                }
-            }
+    function parsePollInterval(str) {
+        if (!str) return 300000
+        var match = str.match(/^(\d+)(s|m|h)$/)
+        if (!match) return 300000
+        var val = parseInt(match[1])
+        switch (match[2]) {
+            case "s": return val * 1000
+            case "m": return val * 60000
+            case "h": return val * 3600000
         }
-        xhr.open("GET", baseUrl + "/api/status")
-        xhr.send()
+        return 300000
     }
 
-    function checkBackendInstalled() {
-        execCmd("__checkbin__", "test -x " + backendBin.replace("~", "$HOME"))
+    function getInstances() {
+        var raw = Plasmoid.configuration.instances
+        try {
+            var list = JSON.parse(raw)
+            if (Array.isArray(list)) return list
+        } catch(e) {}
+        return []
     }
 
-    function handleCheckBinResult(exitCode) {
-        if (exitCode === 0) {
-            backendState = "not_running"
-            startBackend()
+    function fetchInstanceIssues(inst, callback) {
+        var isCloud = (inst.jiraEmail || "") !== ""
+        var apiPath, authHeader
+
+        if (isCloud) {
+            apiPath = "/rest/api/3/search/jql?jql=" + encodeURIComponent(inst.jql || "") + "&fields=summary,status&maxResults=50"
+            authHeader = "Basic " + Qt.btoa(inst.jiraEmail + ":" + inst.jiraToken)
         } else {
-            backendState = "not_installed"
-            detectArch()
+            apiPath = "/rest/api/2/search?jql=" + encodeURIComponent(inst.jql || "") + "&fields=summary,status&maxResults=50"
+            authHeader = "Bearer " + inst.jiraToken
         }
-    }
 
-    function detectArch() {
-        execCmd("__uname__", "uname -m")
-    }
+        var url = inst.jiraUrl.replace(/\/+$/, "") + apiPath
 
-    function handleUnameResult(arch) {
-        if (arch === "x86_64") {
-            detectedArch = "amd64"
-        } else if (arch === "aarch64" || arch === "arm64") {
-            detectedArch = "arm64"
-        } else {
-            detectedArch = arch
-        }
-        fetchLatestVersion()
-    }
-
-    function fetchLatestVersion() {
         var xhr = new XMLHttpRequest()
         xhr.onreadystatechange = function() {
             if (xhr.readyState === XMLHttpRequest.DONE) {
                 if (xhr.status === 200) {
                     try {
                         var data = JSON.parse(xhr.responseText)
-                        latestVersion = data.tag_name || ""
+                        callback(null, data.issues || [])
                     } catch(e) {
-                        backendState = "error"
-                        backendError = "Failed to parse GitHub response"
+                        callback("Failed to parse response", [])
                     }
                 } else {
-                    backendState = "error"
-                    backendError = "Failed to fetch latest version (HTTP " + xhr.status + ")"
+                    var errMsg = "HTTP " + xhr.status
+                    try {
+                        var errData = JSON.parse(xhr.responseText)
+                        if (errData.errorMessages && errData.errorMessages.length > 0)
+                            errMsg = errData.errorMessages[0]
+                    } catch(e) {}
+                    callback(errMsg, [])
                 }
             }
         }
-        xhr.open("GET", "https://api.github.com/repos/" + githubRepo + "/releases/latest")
+        xhr.open("GET", url)
+        xhr.setRequestHeader("Authorization", authHeader)
+        xhr.setRequestHeader("Accept", "application/json")
         xhr.send()
-    }
-
-    function downloadAndInstall() {
-        backendState = "installing"
-        backendError = ""
-        var ver = latestVersion
-        var tarball = "jira-tray-" + ver + "-linux-" + detectedArch + ".tar.gz"
-        var url = "https://github.com/" + githubRepo + "/releases/download/" + ver + "/" + tarball
-        var cmd = "set -e && " +
-            "mkdir -p ~/.local/bin && " +
-            "cd $(mktemp -d) && " +
-            "curl -fsSL -o release.tar.gz '" + url + "' && " +
-            "tar xzf release.tar.gz --strip-components=1 && " +
-            "chmod +x jira-tray && " +
-            "mv jira-tray ~/.local/bin/jira-tray && " +
-            "mkdir -p ~/.config/autostart && " +
-            "printf '[Desktop Entry]\\nType=Application\\nName=Jira Tray\\nComment=Jira task monitor for KDE Plasma system tray\\nExec=%s/.local/bin/jira-tray\\nTerminal=false\\nCategories=Utility;\\nX-KDE-autostart-phase=2\\n' \"$HOME\" > ~/.config/autostart/jira-tray.desktop"
-        execCmd("__install__", cmd)
-    }
-
-    function handleInstallResult(exitCode, stderr) {
-        if (exitCode === 0) {
-            startBackend()
-        } else {
-            backendState = "error"
-            backendError = "Install failed: " + stderr.split("\n")[0]
-        }
-    }
-
-    function startBackend() {
-        backendState = "starting"
-        startPollCount = 0
-        execCmd("__start__", "nohup ~/.local/bin/jira-tray > /dev/null 2>&1 & echo $!")
-    }
-
-    function handleStartResult(exitCode, stderr) {
-        if (exitCode !== 0) {
-            backendState = "error"
-            backendError = "Failed to start backend"
-            return
-        }
-        startPollTimer.start()
     }
 
     Timer {
-        id: startPollTimer
-        interval: 2000
+        id: pollTimer
+        interval: 10000
+        running: true
         repeat: true
-        onTriggered: {
-            startPollCount++
-            if (startPollCount > 15) {
-                startPollTimer.stop()
-                backendState = "error"
-                backendError = "Backend started but not responding after 30s"
+        onTriggered: pollAllInstances()
+    }
+
+    function pollAllInstances() {
+        var list = getInstances()
+        var now = Date.now()
+        for (var i = 0; i < list.length; i++) {
+            var inst = list[i]
+            if (!inst.jiraUrl || !inst.jiraToken) continue
+            var interval = parsePollInterval(inst.pollInterval)
+            var lastPoll = instanceLastPoll[inst.id] || 0
+            if (now - lastPoll >= interval) {
+                pollInstance(inst)
+            }
+        }
+    }
+
+    function pollInstance(inst) {
+        var lp = instanceLastPoll
+        lp[inst.id] = Date.now()
+        instanceLastPoll = lp
+
+        fetchInstanceIssues(inst, function(err, issues) {
+            var states = instanceStates
+            var state = states[inst.id] || { issues: [], lastKeys: {}, lastError: "", lastUpdate: "" }
+
+            if (err) {
+                state.lastError = err
+                state.lastUpdate = Qt.formatTime(new Date(), "HH:mm:ss")
+                states[inst.id] = state
+                instanceStates = states
+                rebuildTaskModel()
                 return
             }
-            var xhr = new XMLHttpRequest()
-            xhr.onreadystatechange = function() {
-                if (xhr.readyState === XMLHttpRequest.DONE) {
-                    if (xhr.status === 200) {
-                        startPollTimer.stop()
-                        backendState = "connected"
-                        syncConfigFromBackend()
-                        try {
-                            var data = JSON.parse(xhr.responseText)
-                            taskCount = data.count
-                            lastUpdate = data.lastUpdate || ""
-                            errorText = data.error || ""
-                            updateInstancesFromStatus(data)
-                        } catch(e) {}
-                        fetchTasks()
-                    }
+
+            state.lastError = ""
+            state.lastUpdate = Qt.formatTime(new Date(), "HH:mm:ss")
+
+            // Detect new issues for notifications
+            var currentKeys = {}
+            var newIssues = []
+            for (var j = 0; j < issues.length; j++) {
+                var key = issues[j].key
+                currentKeys[key] = true
+                if (!state.lastKeys[key] && Object.keys(state.lastKeys).length > 0) {
+                    newIssues.push(issues[j])
                 }
             }
-            xhr.open("GET", baseUrl + "/api/status")
-            xhr.send()
+
+            state.lastKeys = currentKeys
+            state.issues = issues
+            states[inst.id] = state
+            instanceStates = states
+
+            // Send notifications for new issues
+            for (var k = 0; k < newIssues.length; k++) {
+                var iss = newIssues[k]
+                sendNotification(
+                    "[" + (inst.name || "Jira") + "] New: " + iss.key,
+                    iss.fields.summary
+                )
+            }
+
+            rebuildTaskModel()
+        })
+    }
+
+    function rebuildTaskModel() {
+        var list = getInstances()
+        var tasks = []
+        var names = []
+        var counts = {}
+        var latestUpdate = ""
+        var anyError = ""
+
+        for (var i = 0; i < list.length; i++) {
+            var inst = list[i]
+            var state = instanceStates[inst.id]
+            if (!state) continue
+
+            var instName = inst.name || inst.id
+            names.push(instName)
+            var instIssues = state.issues || []
+            counts[instName] = instIssues.length
+
+            for (var j = 0; j < instIssues.length; j++) {
+                var iss = instIssues[j]
+                tasks.push({
+                    key: iss.key,
+                    summary: iss.fields.summary,
+                    status: iss.fields.status.name,
+                    url: inst.jiraUrl.replace(/\/+$/, "") + "/browse/" + iss.key,
+                    instanceName: instName
+                })
+            }
+
+            if (state.lastUpdate) latestUpdate = state.lastUpdate
+            if (state.lastError) anyError = state.lastError
+        }
+
+        taskModel = tasks
+        taskCount = tasks.length
+        instanceNames = names
+        instanceCounts = counts
+        lastUpdate = latestUpdate
+        errorText = anyError
+    }
+
+    function triggerRefresh() {
+        instanceLastPoll = {}
+        pollAllInstances()
+    }
+
+    // Clean up stale instances when config changes
+    Connections {
+        target: Plasmoid.configuration
+        function onInstancesChanged() {
+            configChangeTimer.restart()
         }
     }
 
-    function syncConfigFromBackend() {
-        var raw = Plasmoid.configuration.instances
-        var existing = []
-        try { existing = JSON.parse(raw) } catch(e) {}
-        if (Array.isArray(existing) && existing.length > 0) return
+    Timer {
+        id: configChangeTimer
+        interval: 500
+        onTriggered: {
+            var list = getInstances()
+            var activeIds = {}
+            for (var i = 0; i < list.length; i++) {
+                activeIds[list[i].id] = true
+            }
 
-        var xhr = new XMLHttpRequest()
-        xhr.onreadystatechange = function() {
-            if (xhr.readyState === XMLHttpRequest.DONE) {
-                if (xhr.status === 200) {
-                    try {
-                        var instances = JSON.parse(xhr.responseText)
-                        if (Array.isArray(instances) && instances.length > 0) {
-                            Plasmoid.configuration.instances = JSON.stringify(instances)
-                        }
-                    } catch(e) {}
+            // Remove stale instance states
+            var states = instanceStates
+            var lp = instanceLastPoll
+            var changed = false
+            for (var id in states) {
+                if (!activeIds[id]) {
+                    delete states[id]
+                    delete lp[id]
+                    changed = true
                 }
             }
-        }
-        xhr.open("GET", baseUrl + "/api/instances")
-        xhr.send()
-    }
+            if (changed) {
+                instanceStates = states
+                instanceLastPoll = lp
+                rebuildTaskModel()
+            }
 
-    // --- End auto-install ---
+            // Trigger immediate poll for any new/changed instances
+            pollAllInstances()
+        }
+    }
 
     function filteredTasks() {
         if (currentTab === 0) return taskModel
@@ -249,126 +269,16 @@ PlasmoidItem {
         return instanceCounts[name] || 0
     }
 
-    property var instanceCounts: ({})
-
-    function updateInstancesFromStatus(data) {
-        if (!data.instances) return
-        var names = []
-        var counts = {}
-        for (var i = 0; i < data.instances.length; i++) {
-            var inst = data.instances[i]
-            names.push(inst.name)
-            counts[inst.name] = inst.count
-        }
-        instanceNames = names
-        instanceCounts = counts
+    function badgeColor() {
+        if (taskCount === 0) return "#4CAF50"
+        if (taskCount <= 5) return "#FFC107"
+        return "#F44336"
     }
-
-    readonly property string baseUrl: "http://127.0.0.1:17842"
 
     Plasmoid.status: taskCount > 0 ? PlasmaCore.Types.ActiveStatus : PlasmaCore.Types.PassiveStatus
 
-    Connections {
-        target: Plasmoid.configuration
-        function onInstancesChanged() { pushConfigTimer.restart() }
-    }
-
-    Timer {
-        id: pushConfigTimer
-        interval: 500
-        onTriggered: pushConfig()
-    }
-
-    function pushConfig() {
-        var raw = Plasmoid.configuration.instances
-        var list
-        try {
-            list = JSON.parse(raw)
-        } catch(e) {
-            return
-        }
-        if (!Array.isArray(list) || list.length === 0) return
-
-        var xhr = new XMLHttpRequest()
-        xhr.open("POST", baseUrl + "/api/instances/sync")
-        xhr.setRequestHeader("Content-Type", "application/json")
-        xhr.send(JSON.stringify(list))
-    }
-
     toolTipMainText: "Jira: " + taskCount + " tasks"
     toolTipSubText: lastUpdate ? "Updated " + lastUpdate : "Loading..."
-
-    Timer {
-        id: statusTimer
-        interval: 30000
-        running: backendState === "connected"
-        repeat: true
-        onTriggered: fetchStatus()
-    }
-
-    function fetchStatus() {
-        var xhr = new XMLHttpRequest();
-        xhr.onreadystatechange = function() {
-            if (xhr.readyState === XMLHttpRequest.DONE) {
-                if (xhr.status === 200) {
-                    try {
-                        var data = JSON.parse(xhr.responseText);
-                        taskCount = data.count;
-                        lastUpdate = data.lastUpdate || "";
-                        errorText = data.error || "";
-                        updateInstancesFromStatus(data);
-                    } catch(e) {}
-                } else {
-                    beginBackendCheck()
-                }
-            }
-        };
-        xhr.open("GET", baseUrl + "/api/status");
-        xhr.send();
-    }
-
-    function fetchTasks() {
-        var xhr = new XMLHttpRequest();
-        xhr.onreadystatechange = function() {
-            if (xhr.readyState === XMLHttpRequest.DONE) {
-                if (xhr.status === 200) {
-                    try {
-                        var data = JSON.parse(xhr.responseText);
-                        taskModel = data;
-                    } catch(e) {}
-                }
-            }
-        };
-        xhr.open("GET", baseUrl + "/api/tasks");
-        xhr.send();
-    }
-
-    function triggerRefresh() {
-        var xhr = new XMLHttpRequest();
-        xhr.onreadystatechange = function() {
-            if (xhr.readyState === XMLHttpRequest.DONE) {
-                if (xhr.status === 200) {
-                    try {
-                        var data = JSON.parse(xhr.responseText);
-                        taskCount = data.count;
-                        lastUpdate = data.lastUpdate || "";
-                        errorText = data.error || "";
-                        updateInstancesFromStatus(data);
-                    } catch(e) {}
-                }
-                fetchTasks();
-            }
-        };
-        xhr.open("POST", baseUrl + "/api/refresh");
-        xhr.send();
-    }
-
-    function badgeColor() {
-        if (backendState !== "connected") return "#9E9E9E"
-        if (taskCount === 0) return "#4CAF50";
-        if (taskCount <= 5) return "#FFC107";
-        return "#F44336";
-    }
 
     compactRepresentation: MouseArea {
         id: compactRoot
@@ -389,10 +299,10 @@ PlasmoidItem {
 
             PlasmaComponents.Label {
                 anchors.centerIn: parent
-                text: root.backendState !== "connected" ? "?" : (root.taskCount > 99 ? "99" : root.taskCount.toString())
+                text: root.taskCount > 99 ? "99" : root.taskCount.toString()
                 font.pixelSize: parent.height * 0.5
                 font.bold: true
-                color: root.backendState !== "connected" ? "white" : (root.taskCount <= 5 && root.taskCount > 0 ? "#333333" : "white")
+                color: root.taskCount <= 5 && root.taskCount > 0 ? "#333333" : "white"
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
             }
@@ -406,7 +316,6 @@ PlasmoidItem {
         Layout.preferredHeight: Kirigami.Units.gridUnit * 20
 
         header: PlasmaExtras.PlasmoidHeading {
-            visible: root.backendState === "connected"
             RowLayout {
                 anchors.fill: parent
                 spacing: Kirigami.Units.smallSpacing
@@ -431,80 +340,9 @@ PlasmoidItem {
             }
         }
 
-        // --- Install / setup UI ---
-        ColumnLayout {
-            anchors.centerIn: parent
-            visible: root.backendState !== "connected"
-            spacing: Kirigami.Units.largeSpacing
-
-            Kirigami.Icon {
-                source: root.backendState === "error" ? "dialog-error" : "download"
-                Layout.preferredWidth: Kirigami.Units.iconSizes.huge
-                Layout.preferredHeight: Kirigami.Units.iconSizes.huge
-                Layout.alignment: Qt.AlignHCenter
-            }
-
-            PlasmaComponents.Label {
-                text: {
-                    switch (root.backendState) {
-                        case "checking": return "Checking backend..."
-                        case "not_running": return "Starting backend..."
-                        case "not_installed": return "Backend not installed"
-                        case "installing": return "Installing backend..."
-                        case "starting": return "Starting backend..."
-                        case "error": return "Error"
-                        default: return ""
-                    }
-                }
-                font.bold: true
-                Layout.alignment: Qt.AlignHCenter
-            }
-
-            PlasmaComponents.Label {
-                visible: root.backendState === "not_installed" && root.latestVersion !== ""
-                text: root.latestVersion + " / linux-" + root.detectedArch
-                opacity: 0.6
-                Layout.alignment: Qt.AlignHCenter
-            }
-
-            PlasmaComponents.Label {
-                visible: root.backendState === "error" && root.backendError !== ""
-                text: root.backendError
-                color: Kirigami.Theme.negativeTextColor
-                wrapMode: Text.Wrap
-                Layout.maximumWidth: Kirigami.Units.gridUnit * 16
-                Layout.alignment: Qt.AlignHCenter
-                horizontalAlignment: Text.AlignHCenter
-            }
-
-            PlasmaComponents.BusyIndicator {
-                visible: root.backendState === "checking" || root.backendState === "installing" || root.backendState === "starting"
-                running: visible
-                Layout.alignment: Qt.AlignHCenter
-            }
-
-            PlasmaComponents.Button {
-                visible: root.backendState === "not_installed" && root.latestVersion !== ""
-                text: "Install Backend"
-                icon.name: "download"
-                Layout.alignment: Qt.AlignHCenter
-                onClicked: root.downloadAndInstall()
-            }
-
-            PlasmaComponents.Button {
-                visible: root.backendState === "error"
-                text: "Retry"
-                icon.name: "view-refresh"
-                Layout.alignment: Qt.AlignHCenter
-                onClicked: root.beginBackendCheck()
-            }
-        }
-
-        // --- Normal task UI ---
         ColumnLayout {
             anchors.fill: parent
             spacing: 0
-            visible: root.backendState === "connected"
 
             PlasmaComponents.Label {
                 visible: root.errorText !== ""
@@ -512,6 +350,18 @@ PlasmoidItem {
                 color: Kirigami.Theme.negativeTextColor
                 Layout.fillWidth: true
                 Layout.margins: Kirigami.Units.smallSpacing
+                wrapMode: Text.Wrap
+            }
+
+            // "No instances configured" placeholder
+            PlasmaComponents.Label {
+                visible: root.getInstances().length === 0
+                text: "No instances configured.\nRight-click \u2192 Configure to add Jira instances."
+                opacity: 0.6
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
                 wrapMode: Text.Wrap
             }
 
@@ -539,7 +389,7 @@ PlasmoidItem {
             }
 
             PlasmaComponents.Label {
-                visible: root.filteredTasks().length === 0 && root.errorText === ""
+                visible: root.getInstances().length > 0 && root.filteredTasks().length === 0 && root.errorText === ""
                 text: "No tasks"
                 opacity: 0.6
                 Layout.fillWidth: true
@@ -563,7 +413,7 @@ PlasmoidItem {
                         spacing: 2
 
                         PlasmaComponents.Label {
-                            text: modelData.key + " — " + modelData.summary
+                            text: modelData.key + " \u2014 " + modelData.summary
                             Layout.fillWidth: true
                             elide: Text.ElideRight
                             maximumLineCount: 1
@@ -578,7 +428,7 @@ PlasmoidItem {
                             }
                             PlasmaComponents.Label {
                                 visible: root.currentTab === 0 && modelData.instanceName !== undefined
-                                text: modelData.instanceName ? ("· " + modelData.instanceName) : ""
+                                text: modelData.instanceName ? ("\u00b7 " + modelData.instanceName) : ""
                                 opacity: 0.4
                                 font.pixelSize: Kirigami.Theme.smallFont.pixelSize
                             }
@@ -591,15 +441,13 @@ PlasmoidItem {
         }
 
         Component.onCompleted: {
-            root.beginBackendCheck()
+            root.pollAllInstances()
         }
     }
 
     onExpandedChanged: {
         if (expanded) {
-            if (backendState === "connected") {
-                fetchTasks()
-            }
+            triggerRefresh()
         }
     }
 }
