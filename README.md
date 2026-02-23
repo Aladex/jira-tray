@@ -1,6 +1,16 @@
+<p align="center">
+  <img src="assets/logo.svg" width="128" height="128" alt="jira-tray logo">
+</p>
+
 # jira-tray
 
 A lightweight Jira task monitor that lives in your KDE Plasma system tray. It polls one or more Jira instances for assigned tasks and displays them as a badge widget with a popup list.
+
+## Screenshots
+
+| All tasks | Filter by instance |
+|---|---|
+| ![All tasks](assets/screenshot-all-tasks.png) | ![Instance filter](assets/screenshot-instance-filter.png) |
 
 ## Architecture
 
